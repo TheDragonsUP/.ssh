@@ -1,69 +1,164 @@
--- local variables for API functions. any changes to the line below will be lost on re-generation
-local client_screen_size, entity_get_local_player, entity_get_player_weapon, entity_get_prop, entity_is_alive, globals_frametime, renderer_gradient, ui_get, ui_new_checkbox, ui_new_color_picker, ui_new_slider, ui_reference, ui_set, ui_set_callback, ui_set_visible = client.screen_size, entity.get_local_player, entity.get_player_weapon, entity.get_prop, entity.is_alive, globals.frametime, renderer.gradient, ui.get, ui.new_checkbox, ui.new_color_picker, ui.new_slider, ui.reference, ui.set, ui.set_callback, ui.set_visible
-local clamp = function(v, min, max) local num = v; num = num < min and min or num; num = num > max and max or num; return num end
+local roll_checkbox = ui.new_checkbox("AA", "Other", "Roll invert key")
+local MM_enable = ui.new_checkbox("AA", "Anti-aimbot angles", "\aB6B665FFForce roll")
+local roll_hotkey = ui.new_hotkey("AA", "Other", "Roll invert key", true)
+local disablers = ui.new_multiselect("AA", "Other", "Roll disablers", "Quick peek assist", "Duck peek assist", "Edge yaw", "Velocity", "Jump at edge")
+local disablers_hk = ui.new_hotkey("AA", "Other", "\n", true)
+local velocity_slider = ui.new_slider("AA","Other", "Velocity limit", 2, 135)
 
-local easing = require "gamesense/easing"
-local m_alpha = 0
+local aa_ref = ui.reference("AA", "Anti-aimbot angles", "Enabled")
+local roll_ref = ui.reference("AA", "Anti-aimbot angles", "Roll")
+local qps_ref = ui.reference("RAGE", "OTHER", "Quick Peek assist")
+local fd_ref = ui.reference("RAGE", "Other", "Duck peek assist")
+local edge_ref = ui.reference("AA", "Anti-aimbot angles", "Edge yaw")
+local fl_limit_ref = ui.reference("AA", "Fake lag", "Limit")
+local edge_jump_ref = ui.reference("MISC", "Movement", "Jump at edge")
 
-local scope_overlay = ui_reference('VISUALS', 'Effects', 'Remove scope overlay')
-local master_switch = ui_new_checkbox('Visuals', 'Effects', 'Custom scope lines')
-local color_picker = ui_new_color_picker('Visuals', 'Effects', '\n scope_lines_color_picker', 0, 0, 0, 255)
-local overlay_position = ui_new_slider('Visuals', 'Effects', '\n scope_lines_initial_pos', 0, 500, 190)
-local overlay_offset = ui_new_slider('Visuals', 'Effects', '\n scope_lines_offset', 0, 500, 15)
-local fade_time = ui_new_slider('Visuals', 'Effects', 'Fade animation speed', 3, 20, 12, true, 'fr', 1, { [3] = 'Off' })
+local csgo_weapons = require "gamesense/csgo_weapons"
 
-local g_paint_ui = function()
-	ui_set(scope_overlay, true)
+local ffi = require("ffi")
+local gamerules_ptr = client.find_signature("client.dll", "\x83\x3D\xCC\xCC\xCC\xCC\xCC\x74\x2A\xA1")
+local gamerules = ffi.cast("intptr_t**", ffi.cast("intptr_t", gamerules_ptr) + 2)[0]
+
+local return_fl = return_fl
+local is_valve_ds_spoofed = 0
+
+local function contains(tbl, val) 
+    for i=1, #tbl do
+        if tbl[i] == val then return true end 
+    end 
+    return false 
 end
 
-local g_paint = function()
-	ui_set(scope_overlay, false)
+client.set_event_callback("setup_command", function(cmd)
+    local weapon = csgo_weapons[entity.get_prop(entity.get_player_weapon(entity.get_local_player()), "m_iItemDefinitionIndex")]
 
-	local width, height = client_screen_size()
-	local offset, initial_position, speed, color =
-		ui_get(overlay_offset) * height / 1080, 
-		ui_get(overlay_position) * height / 1080, 
-		ui_get(fade_time), { ui_get(color_picker) }
+    local xv, yv, zv = entity.get_prop(entity.get_local_player(), "m_vecVelocity")
+	local velocity = math.sqrt(xv^2 + yv^2)
+    local on_ground = bit.band(entity.get_prop(entity.get_local_player(), 'm_fFlags'), bit.lshift(1, 0))
 
-	local me = entity_get_local_player()
-	local wpn = entity_get_player_weapon(me)
+    local disabler_tbl = {
+        {
+            Name = "Quick peek assist",
+            Variable = (ui.get(qps_ref + 1))
+        },
+        {
+            Name = "Duck peek assist",
+            Variable = (({ui.get(fd_ref)})[1])
+        },
+        {
+            Name = "Edge yaw",
+            Variable = (ui.get(edge_ref))
+        },
+        {
+            Name = "Velocity",
+            Variable = (on_ground == 1 and velocity >= ui.get(velocity_slider))
+        },
+        {
+            Name = "Jump at edge",
+            Variable = (({ui.get(edge_jump_ref + 1)})[1])
+        }
+    }
 
-	local scope_level = entity_get_prop(wpn, 'm_zoomLevel')
-	local scoped = entity_get_prop(me, 'm_bIsScoped') == 1
-	local resume_zoom = entity_get_prop(me, 'm_bResumeZoom') == 1
+    cmd.roll = ui.get(roll_ref)
+    
+    if is_valve_ds_spoofed == 1 then
+        if cmd.chokedcommands > 6 then
+            cmd.chokedcommands = 0
+        end
+        if ui.get(fl_limit_ref) > 6 then
+            return_fl = ui.get(fl_limit_ref)
+            ui.set(fl_limit_ref, 6)
+        end
+        if ui.get(roll_ref) > 44 then
+            ui.set(roll_ref, 44)
+        end
+        if ui.get(roll_ref) < -44 then
+            ui.set(roll_ref, -44)
+        end
+    else
+        if ui.get(fl_limit_ref) == 6 and return_fl ~= nil then
+            ui.set(fl_limit_ref, return_fl)
+            return_fl = nil
+        end
+        if ui.get(roll_ref) == 44 then
+            ui.set(roll_ref, 50)
+        end
+        if ui.get(roll_ref) == -44 then
+            ui.set(roll_ref, -50)
+        end
+    end
 
-	local is_valid = entity_is_alive(me) and wpn ~= nil and scope_level ~= nil
-	local act = is_valid and scope_level > 0 and scoped and not resume_zoom
+    if weapon == nil then goto skip end
 
-	local FT = speed > 3 and globals_frametime() * speed or 1
-	local alpha = easing.linear(m_alpha, 0, 1, 1)
+    if entity.get_prop(entity.get_local_player(), "m_MoveType") == 9 or weapon.type == "grenade" and velocity >= 1.01001 and on_ground == 1 or ui.get(roll_ref) == 0 or not ui.get(aa_ref) then
+        cmd.roll = 0
+    end
 
-	renderer_gradient(width/2 - initial_position + 2, height / 2, initial_position - offset, 1, color[1], color[2], color[3], 0, color[1], color[2], color[3], alpha*color[4], true)
-	renderer_gradient(width/2 + offset, height / 2, initial_position - offset, 1, color[1], color[2], color[3], alpha*color[4], color[1], color[2], color[3], 0, true)
+    if ui.get(roll_checkbox) then
+        ui.set(roll_ref, ui.get(roll_hotkey) and (50 - (is_valve_ds_spoofed * 6)) or (-50 + (is_valve_ds_spoofed * 6)))
+    end
+    
+    for _, v in ipairs(disabler_tbl) do
+        if contains(ui.get(disablers), v.Name) and ui.get(disablers_hk) then
+            if v.Variable then
+                cmd.roll = 0
+            end
+        end
+    end
 
-	renderer_gradient(width / 2, height/2 - initial_position + 2, 1, initial_position - offset, color[1], color[2], color[3], 0, color[1], color[2], color[3], alpha*color[4], false)
-	renderer_gradient(width / 2, height/2 + offset, 1, initial_position - offset, color[1], color[2], color[3], alpha*color[4], color[1], color[2], color[3], 0, false)
-	
-	m_alpha = clamp(m_alpha + (act and FT or -FT), 0, 1)
-end
+    if contains(ui.get(disablers), "Velocity") then
+        ui.set_visible(velocity_slider, true)
+    else
+        ui.set_visible(velocity_slider, false)
+    end
 
-local ui_callback = function(c)
-	local master_switch, addr = ui_get(c), ''
+    ::skip::
 
-	if not master_switch then
-		m_alpha, addr = 0, 'un'
-	end
-	
-	local _func = client[addr .. 'set_event_callback']
+    local is_valve_ds = ffi.cast('bool*', gamerules[0] + 124)
+    if is_valve_ds ~= nil then
+        if cmd.roll ~= 0 and ui.get(MM_enable) then
+            if is_valve_ds[0] == true then
+                is_valve_ds[0] = 0
+                is_valve_ds_spoofed = 1
+            end
+        else
+            if is_valve_ds[0] == false and is_valve_ds_spoofed == 1 then
+                --is_valve_ds[0] = 1
+                --is_valve_ds_spoofed = 0
+                cmd.roll = 0
+            end
+        end
+    end
+end)
 
-	ui_set_visible(scope_overlay, not master_switch)
-	ui_set_visible(overlay_position, master_switch)
-	ui_set_visible(overlay_offset, master_switch)
-	ui_set_visible(fade_time, master_switch)
+client.set_event_callback("paint_ui", function()
+    if globals.mapname() == nil and entity.get_local_player() == nil then
+        is_valve_ds_spoofed = 0
+        if return_fl ~= nil then
+            ui.set(fl_limit_ref, return_fl)
+            return_fl = nil
+        end
+    end
+end)
 
-	_func('paint_ui', g_paint_ui)
-	_func('paint', g_paint)
-end
+client.set_event_callback("shutdown", function()
+    if return_fl ~= nil then
+        ui.set(fl_limit_ref, return_fl)
+        return_fl = nil
+    end
+    if globals.mapname() == nil then 
+        is_valve_ds_spoofed = 0
+        return
+    end
+    local is_valve_ds = ffi.cast('bool*', gamerules[0] + 124)
+    if is_valve_ds ~= nil then
+        if is_valve_ds[0] == false and is_valve_ds_spoofed == 1 then
+            is_valve_ds[0] = 1
+            is_valve_ds_spoofed = 0
+        end
+    end
+end)
 
-ui_set_callback(master_switch, ui_callback)
-ui_callback(master_switch)
+client.set_event_callback("pre_config_load", function()
+    return_fl = nil
+end)
